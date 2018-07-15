@@ -1,0 +1,199 @@
+%--------------------------------------------------------------------------------------
+%
+%	Philippine DOLIQUE
+%
+%	Projet reconnaissance de plaques d'immatriculation
+%
+%	Modification : 04.06.2018
+%
+%--------------------------------------------------------------------------------------
+
+clear all
+close all
+clc
+warning('off','all');
+
+resultat = ['DA-849-RJ'; 'DM-814-SV'; 'AT-752-FR'; 'AP-769-CL'; 'DC-282-FJ'; 'CX-478-TL'; 'BP-341-NT'; 'AM-338-AR'; 'DJ-538-WF';...
+    'DB-654-NN'; 'DH-013-JQ'; 'CN-990-LL'; 'AT-751-SW'; 'DL-536-MG'; 'CY-291-ZN'; 'AW-376-NH'; 'AC-439-WW'; 'DE-002-DK'; 'BV-593-WP';...
+    'CA-101-HD'; 'AS-118-ZQ'; 'AD-446-YA'; 'DA-187-CW'; 'CH-698-SC'; 'CQ-140-WY'; 'DK-159-RF'; 'CD-702-JS'; 'CG-733-RF'; 'CG-343-NE';...
+    'BX-066-LS'; 'AE-222-DN'; 'BP-564-NF'; 'BK-392-TE'; 'BK-392-TE'; 'BJ-742-RZ'; 'AW-530-QN'; 'DE-955-KY'; 'DN-899-EE'; 'BZ-896-SP';...
+    'CT-277-QF'; 'DN-184-VH'; 'DK-805-TB'; 'BJ-019-ZS'; 'BT-286-NT'; 'DB-830-NF'; 'CT-282-GA'; 'CT-282-GA'; 'DC-282-FJ'; 'AE-433-HR';...
+    'AZ-982-WT'; 'AZ-982-WT'; 'CN-974-JT'; 'BW-930-WE'; 'AL-430-HK'; 'AL-430-HK'];
+
+numPos = 55*9;
+
+
+
+    %% Traitement initiale
+    
+    % Ouverture de l'image
+     image = imread('P1.JPG');
+
+    % Prétraitement de l'image, qui permet de mettre en avant les carrés
+    % bleus sur les côtés de la plaque
+    im = pretraiter(image);
+    [H,W] = size(im);
+    figure, subplot(3,1,1); imshow(im); title('image pretraitée');
+    
+
+    %% Recherche des contours de la plaque 
+    
+    L = 1:H;
+    l = 1:W;
+    
+    %Calcul de l'histogramme cumulé sur la moitié de l'image pour détecter
+    %la largeur du carré bleu de gauche
+    absCol = histVerti(im, 9/10);
+    
+    if length(absCol)>2
+        absCol(2) = absCol(length(absCol));
+    end
+
+    imbis = imcrop(im, [absCol(1) 0 (absCol(2)- absCol(1)) H]);
+    
+    subplot(3,1,2); imshow(imbis); title('image recardrée grâce à l histogramme');
+    hold on;
+    
+    % On en déduit sa hauteur
+    box = regionprops(imbis, 'BoundingBox');
+
+    rectangle('Position', box(1).BoundingBox, 'EdgeColor','g','LineWidth',2);
+    
+    absLign(1) = box(1).BoundingBox(2); % Ligne du haut
+    absLign(2) = box(1).BoundingBox(4);% Ligne du bas 
+    imter = imcrop(im, [0 absLign(1) W absLign(2)]);
+    subplot(3,1,3); imshow(imter); title('image recardrée grâce à regionprops');
+    hold on;
+    %Grâce à la hauteur du carré bleu de gauche sur l'image on en déduit
+    %la position du carré de droite
+    box2 = regionprops(imter, 'BoundingBox');
+    rectangle('Position', box2(1).BoundingBox, 'EdgeColor','g','LineWidth',2); hold on;
+    rectangle('Position', box2(2).BoundingBox, 'EdgeColor','g','LineWidth',2);
+    %On en déduit des rectangles encadrant la plaque et les numéros
+    delta = 10;
+    rect1(1) = box2(1).BoundingBox(1) - delta;
+    rect1(2) = absLign(1) - delta;
+    rect1(3) = box2(2).BoundingBox(1) + box2(2).BoundingBox(3) - box2(1).BoundingBox(1) + 2*delta;
+    rect1(4) = rect1(3)*11/55 + delta;
+    rect2(1) = box2(1).BoundingBox(1) + box2(1).BoundingBox(3) ;
+    rect2(2) = absLign(1);
+    rect2(3) = box2(2).BoundingBox(1) - (box2(1).BoundingBox(1) + box2(1).BoundingBox(3));
+    rect2(4) = rect1(4) - 2*delta;
+    
+    figure; imshow(image); title('plaque encadrée'); hold on; 
+    rectangle('Position', rect1, 'EdgeColor','g','LineWidth',3); hold on;
+    rectangle('Position', rect2, 'EdgeColor','m','LineWidth',3); hold on;
+
+
+    %% Detection et reconnaissance des numéros de la plaque
+    
+    %On réalise une différence entre l'image et un top hat pour faire
+    %ressortir les petits caractères sombres de l'image    
+    
+    plaque = tailleText(rgb2gray(image), rect2(1), rect2(3));
+    BW1 = imcrop(BottomHat(image),[rect2(1) plaque(1) rect2(3) plaque(2)]);
+    figure; subplot(4,1,1); imshow(BW1); title('texte encadré');
+    %On passe l'image en binaire et on réalise une ouverture pour enlever
+    %les petites structures blanches
+    BW2 = im2bw(BW1, 0.2);    
+    subplot(4,1,2); imshow(BW2); title('image binarisée');
+    se = strel('square', 5);
+    BW3 = imopen(BW2, se);
+    subplot(4,1,3); imshow(BW3); title('après ouverture');
+    [Hplaque Wplaque] = size(BW3);
+    
+
+    %On ouvre les images des numéros qui vont servir à la corrélation
+    format = 'plaque%d%s';
+    s = '.jpg';
+    info = imfinfo('plaque0.jpg');
+    hr = info.Height;
+    
+    %On recadre les images pour que les numéros aient la même taille que
+    %ceux de la plaque
+    scale = (Hplaque)/hr;
+    Wr = ceil((info.Width)*scale) ;
+    Hr = Hplaque;
+    
+    %On stocke les numéros
+    iref = zeros(Hr,Wr,32);
+    for num = 0:32
+        imref = imresize(~im2bw(rgb2gray(imread(sprintf(format,num,s))),0.5), scale);
+        iref(:,:,num+1) = imref;
+    end
+    %On labellise la plaque
+    [label, nbobjets] = bwlabel(BW3,8);
+    
+    % Permet de selectionner les 7 plus grands objets de l'image, c'est à
+    % dire les 7 caractères de la plaque
+    
+    aire = zeros(1,nbobjets);
+    for i=1:nbobjets
+        y = bwlabel((label == i),8);
+        m = regionprops(y,'BoundingBox');
+        aire(i) = round(m.BoundingBox(3)*m.BoundingBox(4));        
+    end
+    
+    
+    k = maxk(aire, 7);
+    resultat1='';
+%     subplot(4,1,4),
+    figure, imshow(BW3); title('lettres encadrées'),hold on;
+    for i=1:7
+        
+        % Permet de différencier les cas où il s'agit de lettres des cas où
+        % il s'agit de chiffres
+        switch (i)
+            case {1,2,7}
+                a = 11;
+                b = 33;
+            case 3
+                a = 1;
+                b = 10;
+                resultat1 = strcat(resultat1, '-');
+            case {4, 5}
+                a = 1;
+                b = 10;
+            case 6
+                a = 11;
+                b = 33;
+                resultat1 = strcat(resultat1, '-');
+        end
+        
+        
+        x = bwlabel((label == k(i)),8); 
+        c = regionprops(x,'BoundingBox'); 
+        rectangle('Position', c.BoundingBox, 'EdgeColor','g','LineWidth',2); hold on;
+        
+        
+        Wnum = c.BoundingBox(3);
+        y0= c.BoundingBox(1) - round((Wr-Wnum)/2);
+
+        maxcorr = -100;
+        maxr = -1;
+        %On calcule la corrélation pour chaque numéro, et on garde en
+        %mémoire celui avec la corrélation maximale
+          
+        test = x(1:Hr, y0:y0+Wr-1);
+        for r=a:b
+            correl = corr2(iref(:,:,r),test); 
+            
+            if correl > maxcorr                        
+                maxcorr = correl;
+                maxr = r;
+            end
+            
+             
+        end
+        resultat1 = strcat(resultat1, match(maxr)); 
+          
+    end     
+
+     %On applique l'algorithme OCR pour reconnaitre les numéro
+     txt = ocr(BW3);
+     resultat2 = txt.Text; 
+    
+     disp 'numéro de la plaque : ', display(resultat(1,:));
+     disp 'resultat de la correlation : ',display (resultat1);
+     disp 'resultat avec l OCR : ', display (resultat2);
+    
